@@ -2,6 +2,7 @@ import { Body, Controller, HttpCode, Post, Query } from '@nestjs/common';
 import {
   ClientProxy,
   ClientProxyFactory,
+  EventPattern,
   MessagePattern,
   Transport,
 } from '@nestjs/microservices';
@@ -10,6 +11,8 @@ import { scan } from 'rxjs/operators';
 
 @Controller()
 export class RMQController {
+  static IS_NOTIFIED = false;
+
   client: ClientProxy;
 
   constructor() {
@@ -19,6 +22,7 @@ export class RMQController {
         urls: [`amqp://localhost:5672`],
         queue: 'test',
         queueOptions: { durable: false },
+        socketOptions: { noDelay: true },
       },
     });
   }
@@ -49,8 +53,8 @@ export class RMQController {
       return result === expected;
     };
     return data
-      .map(async tab => await send(tab))
-      .reduce(async (a, b) => (await a) && (await b));
+      .map(async tab => send(tab))
+      .reduce(async (a, b) => (await a) && b);
   }
 
   @MessagePattern({ cmd: 'sum' })
@@ -71,5 +75,15 @@ export class RMQController {
   @MessagePattern({ cmd: 'streaming' })
   streaming(data: number[]): Observable<number> {
     return from(data);
+  }
+
+  @Post('notify')
+  async sendNotification(): Promise<any> {
+    return this.client.emit<number>('notification', true);
+  }
+
+  @EventPattern('notification')
+  eventHandler(data: boolean) {
+    RMQController.IS_NOTIFIED = data;
   }
 }

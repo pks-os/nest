@@ -1,11 +1,15 @@
 import { expect } from 'chai';
 import * as sinon from 'sinon';
-import { NO_PATTERN_MESSAGE } from '../../constants';
+import { NO_MESSAGE_HANDLER } from '../../constants';
+import { BaseRpcContext } from '../../ctx-host/base-rpc.context';
 import { ServerRMQ } from '../../server/server-rmq';
-// tslint:disable:no-string-literal
 
 describe('ServerRMQ', () => {
   let server: ServerRMQ;
+
+  const objectToMap = obj =>
+    new Map(Object.keys(obj).map(key => [key, obj[key]]) as any);
+
   beforeEach(() => {
     server = new ServerRMQ({});
   });
@@ -23,7 +27,7 @@ describe('ServerRMQ', () => {
       createChannelStub = sinon.stub().callsFake(({ setup }) => setup());
       setupChannelStub = sinon
         .stub(server, 'setupChannel')
-        .callsFake(() => ({}));
+        .callsFake(() => ({} as any));
 
       client = {
         on: onStub,
@@ -65,38 +69,44 @@ describe('ServerRMQ', () => {
   });
 
   describe('handleMessage', () => {
-    const pattern = 'test';
-    const msg = {
+    const createMessage = payload => ({
       content: {
-        toString: () =>
-          JSON.stringify({
-            pattern,
-            data: 'tests',
-            id: '3',
-          }),
+        toString: () => JSON.stringify(payload),
       },
       properties: { correlationId: 1 },
-    };
+    });
+    const pattern = 'test';
+    const msg = createMessage({
+      pattern,
+      data: 'tests',
+      id: '3',
+    });
     let sendMessageStub: sinon.SinonStub;
 
     beforeEach(() => {
       sendMessageStub = sinon.stub(server, 'sendMessage').callsFake(() => ({}));
     });
-    it('should send NO_PATTERN_MESSAGE error if key does not exists in handlers object', async () => {
-      await server.handleMessage(msg);
+    it('should call "handleEvent" if identifier is not present', () => {
+      const handleEventSpy = sinon.spy(server, 'handleEvent');
+      server.handleMessage(createMessage({ pattern: '', data: '' }), '');
+      expect(handleEventSpy.called).to.be.true;
+    });
+    it('should send NO_MESSAGE_HANDLER error if key does not exists in handlers object', async () => {
+      await server.handleMessage(msg, '');
       expect(
         sendMessageStub.calledWith({
+          id: '3',
           status: 'error',
-          err: NO_PATTERN_MESSAGE,
+          err: NO_MESSAGE_HANDLER,
         }),
       ).to.be.true;
     });
     it('should call handler if exists in handlers object', async () => {
       const handler = sinon.spy();
-      (server as any).messageHandlers = {
-        [JSON.stringify(pattern)]: handler as any,
-      };
-      await server.handleMessage(msg);
+      (server as any).messageHandlers = objectToMap({
+        [pattern]: handler as any,
+      });
+      await server.handleMessage(msg, '');
       expect(handler.calledOnce).to.be.true;
     });
   });
@@ -158,11 +168,30 @@ describe('ServerRMQ', () => {
       server.sendMessage(message, replyTo, correlationId);
       expect(
         channel.sendToQueue.calledWith(
-          Buffer.from(JSON.stringify(message)),
           replyTo,
+          Buffer.from(JSON.stringify(message)),
           { correlationId },
         ),
+      ).to.be.true;
+    });
+  });
+
+  describe('handleEvent', () => {
+    const channel = 'test';
+    const data = 'test';
+
+    it('should call handler with expected arguments', () => {
+      const handler = sinon.spy();
+      (server as any).messageHandlers = objectToMap({
+        [channel]: handler,
+      });
+
+      server.handleEvent(
+        channel,
+        { pattern: '', data },
+        new BaseRpcContext([]),
       );
+      expect(handler.calledWith(data)).to.be.true;
     });
   });
 });

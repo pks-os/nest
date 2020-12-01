@@ -1,20 +1,25 @@
-import { RequestMethod } from '@nestjs/common';
 import { flatten } from '@nestjs/common/decorators/core/dependencies.decorator';
-import { MiddlewareConsumer, Type } from '@nestjs/common/interfaces';
+import {
+  HttpServer,
+  MiddlewareConsumer,
+  Type,
+} from '@nestjs/common/interfaces';
 import {
   MiddlewareConfigProxy,
   RouteInfo,
 } from '@nestjs/common/interfaces/middleware';
 import { MiddlewareConfiguration } from '@nestjs/common/interfaces/middleware/middleware-configuration.interface';
-import { BindResolveMiddlewareValues } from '@nestjs/common/utils/bind-resolve-values.util';
-import { isNil } from '@nestjs/common/utils/shared.utils';
 import { RoutesMapper } from './routes-mapper';
 import { filterMiddleware } from './utils';
+import { iterate } from 'iterare';
 
 export class MiddlewareBuilder implements MiddlewareConsumer {
   private readonly middlewareCollection = new Set<MiddlewareConfiguration>();
 
-  constructor(private readonly routesMapper: RoutesMapper) {}
+  constructor(
+    private readonly routesMapper: RoutesMapper,
+    private readonly httpAdapter: HttpServer,
+  ) {}
 
   public apply(
     ...middleware: Array<Type<any> | Function | any>
@@ -22,93 +27,60 @@ export class MiddlewareBuilder implements MiddlewareConsumer {
     return new MiddlewareBuilder.ConfigProxy(this, flatten(middleware));
   }
 
-  public build() {
+  public build(): MiddlewareConfiguration[] {
     return [...this.middlewareCollection];
   }
 
-  private bindValuesToResolve(
-    middleware: Type<any> | Type<any>[],
-    resolveParams: any[],
-  ) {
-    if (isNil(resolveParams)) {
-      return middleware;
-    }
-    const bindArgs = BindResolveMiddlewareValues(resolveParams);
-    return [].concat(middleware).map(bindArgs);
+  public getHttpAdapter(): HttpServer {
+    return this.httpAdapter;
   }
 
   private static readonly ConfigProxy = class implements MiddlewareConfigProxy {
-    private contextParameters = null;
     private excludedRoutes: RouteInfo[] = [];
-    private readonly includedRoutes: any[];
 
-    constructor(private readonly builder: MiddlewareBuilder, middleware) {
-      this.includedRoutes = filterMiddleware(middleware);
-    }
+    constructor(
+      private readonly builder: MiddlewareBuilder,
+      private readonly middleware: Array<Type<any> | Function | any>,
+    ) {}
 
     public getExcludedRoutes(): RouteInfo[] {
       return this.excludedRoutes;
     }
 
-    public with(...args): MiddlewareConfigProxy {
-      this.contextParameters = args;
-      return this;
-    }
-
     public exclude(
       ...routes: Array<string | RouteInfo>
     ): MiddlewareConfigProxy {
-      const { routesMapper } = this.builder;
-      this.excludedRoutes = this.mapRoutesToFlatList(
-        routes.map(route => routesMapper.mapRouteToRouteInfo(route)),
-      );
+      this.excludedRoutes = this.getRoutesFlatList(routes);
       return this;
     }
 
     public forRoutes(
       ...routes: Array<string | Type<any> | RouteInfo>
     ): MiddlewareConsumer {
-      const {
-        middlewareCollection,
-        bindValuesToResolve,
-        routesMapper,
-      } = this.builder;
+      const { middlewareCollection } = this.builder;
 
-      const forRoutes = this.mapRoutesToFlatList(
-        routes.map(route => routesMapper.mapRouteToRouteInfo(route)),
-      );
+      const forRoutes = this.getRoutesFlatList(routes);
       const configuration = {
-        middleware: bindValuesToResolve(
-          this.includedRoutes,
-          this.contextParameters,
+        middleware: filterMiddleware(
+          this.middleware,
+          this.excludedRoutes,
+          this.builder.getHttpAdapter(),
         ),
-        forRoutes: forRoutes.filter(route => !this.isRouteExcluded(route)),
+        forRoutes,
       };
       middlewareCollection.add(configuration);
       return this.builder;
     }
 
-    private mapRoutesToFlatList(forRoutes): RouteInfo[] {
-      return forRoutes.reduce((a, b) => a.concat(b));
-    }
+    private getRoutesFlatList(
+      routes: Array<string | Type<any> | RouteInfo>,
+    ): RouteInfo[] {
+      const { routesMapper } = this.builder;
 
-    private isRouteExcluded(routeInfo: RouteInfo): boolean {
-      const pathLastIndex = routeInfo.path.length - 1;
-      const validatedRoutePath =
-        routeInfo.path[pathLastIndex] === '/'
-          ? routeInfo.path.slice(0, pathLastIndex)
-          : routeInfo.path;
-
-      return this.excludedRoutes.some(excluded => {
-        const isPathEqual = validatedRoutePath === excluded.path;
-        if (!isPathEqual) {
-          return false;
-        }
-        return (
-          routeInfo.method === excluded.method ||
-          excluded.method === RequestMethod.ALL
-        );
-      });
+      return iterate(routes)
+        .map(route => routesMapper.mapRouteToRouteInfo(route))
+        .flatten()
+        .toArray();
     }
   };
 }

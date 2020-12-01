@@ -1,13 +1,10 @@
 import { CUSTOM_ROUTE_AGRS_METADATA } from '@nestjs/common/constants';
-import {
-  Body,
-  createRouteParamDecorator,
-  Request,
-} from '@nestjs/common/decorators';
+import { Body, createParamDecorator, Request } from '@nestjs/common/decorators';
 import { RouteParamtypes } from '@nestjs/common/enums/route-paramtypes.enum';
 import { expect } from 'chai';
 import { ROUTE_ARGS_METADATA } from '../../../common/constants';
 import { ContextUtils } from '../../helpers/context-utils';
+import { ExecutionContextHost } from '../../helpers/execution-context-host';
 
 describe('ContextUtils', () => {
   let contextUtils: ContextUtils;
@@ -16,7 +13,7 @@ describe('ContextUtils', () => {
     contextUtils = new ContextUtils();
   });
   describe('reflectCallbackMetadata', () => {
-    const CustomDecorator = createRouteParamDecorator(() => {});
+    const CustomDecorator = createParamDecorator(() => {});
     class TestController {
       public callback(
         @Request() req,
@@ -95,6 +92,33 @@ describe('ContextUtils', () => {
       expect(
         contextUtils.mergeParamsMetatypes(paramsProperties as any, null),
       ).to.be.eql(paramsProperties);
+    });
+  });
+  describe('getCustomFactory', () => {
+    const contextFactory = (args: unknown[]) => new ExecutionContextHost(args);
+
+    describe('when factory is function', () => {
+      it('should return curried factory', () => {
+        const data = 3;
+        const result = 10;
+        const customFactory = (_, req) => result;
+
+        expect(
+          contextUtils.getCustomFactory(customFactory, data, contextFactory)(),
+        ).to.be.eql(result);
+      });
+    });
+    describe('when factory is undefined / is not a function', () => {
+      it('should return curried null identity', () => {
+        const customFactory = undefined;
+        expect(
+          contextUtils.getCustomFactory(
+            customFactory,
+            undefined,
+            contextFactory,
+          )(),
+        ).to.be.eql(null);
+      });
     });
   });
 });

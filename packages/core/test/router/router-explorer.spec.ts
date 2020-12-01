@@ -1,32 +1,57 @@
-import * as sinon from 'sinon';
 import { expect } from 'chai';
-import { RouterExplorer } from '../../router/router-explorer';
+import * as sinon from 'sinon';
 import { Controller } from '../../../common/decorators/core/controller.decorator';
-import { RequestMapping } from '../../../common/decorators/http/request-mapping.decorator';
+import {
+  All,
+  Get,
+  Post,
+} from '../../../common/decorators/http/request-mapping.decorator';
 import { RequestMethod } from '../../../common/enums/request-method.enum';
-import { MetadataScanner } from '../../metadata-scanner';
+import { Injector } from '../../../core/injector/injector';
+import { ApplicationConfig } from '../../application-config';
+import { ExecutionContextHost } from '../../helpers/execution-context-host';
 import { NestContainer } from '../../injector/container';
+import { InstanceWrapper } from '../../injector/instance-wrapper';
+import { MetadataScanner } from '../../metadata-scanner';
+import { RouterExceptionFilters } from '../../router/router-exception-filters';
+import { RouterExplorer } from '../../router/router-explorer';
 
 describe('RouterExplorer', () => {
   @Controller('global')
   class TestRoute {
-    @RequestMapping({ path: 'test' })
-    public getTest() { }
+    @Get('test')
+    public getTest() {}
 
-    @RequestMapping({ path: 'test', method: RequestMethod.POST })
-    public postTest() { }
+    @Post('test')
+    public postTest() {}
 
-    @RequestMapping({ path: 'another-test', method: RequestMethod.ALL })
-    public anotherTest() { }
+    @All('another-test')
+    public anotherTest() {}
 
-    @RequestMapping({ path: ['foo', 'bar'] })
-    public getTestUsingArray() { }
+    @Get(['foo', 'bar'])
+    public getTestUsingArray() {}
   }
 
   let routerBuilder: RouterExplorer;
+  let injector: Injector;
+  let exceptionsFilter: RouterExceptionFilters;
 
   beforeEach(() => {
-    routerBuilder = new RouterExplorer(new MetadataScanner(), new NestContainer());
+    const container = new NestContainer();
+
+    injector = new Injector();
+    exceptionsFilter = new RouterExceptionFilters(
+      container,
+      new ApplicationConfig(),
+      null,
+    );
+    routerBuilder = new RouterExplorer(
+      new MetadataScanner(),
+      container,
+      injector,
+      null,
+      exceptionsFilter,
+    );
   });
 
   describe('scanForPaths', () => {
@@ -79,14 +104,24 @@ describe('RouterExplorer', () => {
 
   describe('applyPathsToRouterProxy', () => {
     it('should method return expected object which represent single route', () => {
-      const bindStub = sinon.stub(routerBuilder, 'applyCallbackToRouter');
+      const bindStub = sinon.stub(
+        routerBuilder,
+        'applyCallbackToRouter' as any,
+      );
       const paths = [
         { path: [''], requestMethod: RequestMethod.GET },
         { path: ['test'], requestMethod: RequestMethod.GET },
         { path: ['foo', 'bar'], requestMethod: RequestMethod.GET },
       ];
 
-      routerBuilder.applyPathsToRouterProxy(null, paths as any, null, '', '');
+      routerBuilder.applyPathsToRouterProxy(
+        null,
+        paths as any,
+        null,
+        '',
+        '',
+        '',
+      );
 
       expect(bindStub.calledWith(null, paths[0], null)).to.be.true;
       expect(bindStub.callCount).to.be.eql(paths.length);
@@ -103,6 +138,51 @@ describe('RouterExplorer', () => {
 
     it('should throw it a there is a bad path expected path', () => {
       expect(() => routerBuilder.validateRoutePath(undefined)).to.throw();
+    });
+  });
+
+  describe('createRequestScopedHandler', () => {
+    let nextSpy: sinon.SinonSpy;
+
+    beforeEach(() => {
+      sinon.stub(injector, 'loadPerContext').callsFake(() => {
+        throw new Error();
+      });
+      nextSpy = sinon.spy();
+      sinon.stub(exceptionsFilter, 'create').callsFake(
+        () =>
+          ({
+            next: nextSpy,
+          } as any),
+      );
+    });
+
+    describe('when "loadPerContext" throws', () => {
+      const moduleKey = 'moduleKey';
+      const methodKey = 'methodKey';
+      const module = {
+        controllers: new Map(),
+      } as any;
+      const wrapper = new InstanceWrapper({
+        instance: { [methodKey]: {} },
+      });
+
+      it('should delegete error to exception filters', async () => {
+        const handler = routerBuilder.createRequestScopedHandler(
+          wrapper,
+          RequestMethod.ALL,
+          module,
+          moduleKey,
+          methodKey,
+        );
+        await handler(null, null, null);
+
+        expect(nextSpy.called).to.be.true;
+        expect(nextSpy.getCall(0).args[0]).to.be.instanceOf(Error);
+        expect(nextSpy.getCall(0).args[1]).to.be.instanceOf(
+          ExecutionContextHost,
+        );
+      });
     });
   });
 });

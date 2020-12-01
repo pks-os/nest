@@ -3,10 +3,11 @@ import { EventEmitter } from 'events';
 import { empty } from 'rxjs';
 import * as sinon from 'sinon';
 import { ClientRMQ } from '../../client/client-rmq';
-// tslint:disable:no-string-literal
 
-describe('ClientRQM', () => {
-  const client = new ClientRMQ({});
+describe('ClientRMQ', function () {
+  this.retries(10);
+
+  let client: ClientRMQ;
 
   describe('connect', () => {
     let createClientStub: sinon.SinonStub;
@@ -15,12 +16,13 @@ describe('ClientRQM', () => {
     let mergeDisconnectEvent: sinon.SinonStub;
 
     beforeEach(async () => {
+      client = new ClientRMQ({});
       createClientStub = sinon.stub(client, 'createClient').callsFake(() => ({
         addListener: () => ({}),
         removeListener: () => ({}),
       }));
       handleErrorsSpy = sinon.spy(client, 'handleError');
-      connect$Stub = sinon.stub(client, 'connect$').callsFake(() => ({
+      connect$Stub = sinon.stub(client, 'connect$' as any).callsFake(() => ({
         subscribe: resolve => resolve(),
         toPromise() {
           return this;
@@ -33,16 +35,12 @@ describe('ClientRQM', () => {
         .stub(client, 'mergeDisconnectEvent')
         .callsFake((_, source) => source);
     });
-    afterEach(() => {
-      createClientStub.restore();
-      handleErrorsSpy.restore();
-      connect$Stub.restore();
-      mergeDisconnectEvent.restore();
-    });
     describe('when is not connected', () => {
       beforeEach(async () => {
-        client['client'] = null;
-        await client.connect();
+        try {
+          client['client'] = null;
+          await client.connect();
+        } catch {}
       });
       it('should call "handleError" once', async () => {
         expect(handleErrorsSpy.called).to.be.true;
@@ -132,8 +130,7 @@ describe('ClientRQM', () => {
     beforeEach(() => {
       client['queue'] = queue;
       client['queueOptions'] = queueOptions;
-      client['isGlobalPrefetchCount'] = isGlobalPrefetchCount;
-      client['prefetchCount'] = prefetchCount;
+      (client as any)['options'] = { isGlobalPrefetchCount, prefetchCount };
 
       channel = {
         assertQueue: sinon.spy(() => ({})),
@@ -173,7 +170,7 @@ describe('ClientRQM', () => {
       };
       client
         .mergeDisconnectEvent(instance as any, empty())
-        .subscribe(null, err => expect(err).to.be.eql(error));
+        .subscribe(null, (err: any) => expect(err).to.be.eql(error));
     });
   });
 
@@ -252,7 +249,7 @@ describe('ClientRQM', () => {
         expect(
           callback.calledWith({
             err: packet.err,
-            response: null,
+            response: 'test',
             isDisposed: true,
           }),
         ).to.be.true;
@@ -273,7 +270,7 @@ describe('ClientRQM', () => {
         expect(
           callback.calledWith({
             err: undefined,
-            response: null,
+            response: 'test',
             isDisposed: true,
           }),
         ).to.be.true;
@@ -320,6 +317,31 @@ describe('ClientRQM', () => {
     it('should close client when it is not null', () => {
       client.close();
       expect(clientCloseSpy.called).to.be.true;
+    });
+  });
+  describe('dispatchEvent', () => {
+    const msg = { pattern: 'pattern', data: 'data' };
+    let sendToQueueStub: sinon.SinonStub, channel;
+
+    beforeEach(() => {
+      sendToQueueStub = sinon.stub();
+      channel = {
+        sendToQueue: sendToQueueStub,
+      };
+      (client as any).channel = channel;
+    });
+
+    it('should publish packet', async () => {
+      sendToQueueStub.callsFake((a, b, c, d) => d());
+      await client['dispatchEvent'](msg);
+
+      expect(sendToQueueStub.called).to.be.true;
+    });
+    it('should throw error', async () => {
+      sendToQueueStub.callsFake((a, b, c, d) => d(new Error()));
+      client['dispatchEvent'](msg).catch(err =>
+        expect(err).to.be.instanceOf(Error),
+      );
     });
   });
 });

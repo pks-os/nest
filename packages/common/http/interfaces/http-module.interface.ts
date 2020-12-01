@@ -1,7 +1,7 @@
 import { AxiosRequestConfig } from 'axios';
 import { ModuleMetadata, Provider, Type } from '../../interfaces';
 
-export interface HttpModuleOptions extends AxiosRequestConfig {}
+export type HttpModuleOptions = AxiosRequestConfig;
 
 export interface HttpModuleOptionsFactory {
   createHttpOptions(): Promise<HttpModuleOptions> | HttpModuleOptions;
@@ -9,8 +9,8 @@ export interface HttpModuleOptionsFactory {
 
 export interface HttpModuleAsyncOptions
   extends Pick<ModuleMetadata, 'imports'> {
-  useExisting?: Type<HttpModuleOptions>;
-  useClass?: Type<HttpModuleOptions>;
+  useExisting?: Type<HttpModuleOptionsFactory>;
+  useClass?: Type<HttpModuleOptionsFactory>;
   useFactory?: (
     ...args: any[]
   ) => Promise<HttpModuleOptions> | HttpModuleOptions;

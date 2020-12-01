@@ -3,22 +3,20 @@ import { empty } from 'rxjs';
 import * as sinon from 'sinon';
 import { ClientMqtt } from '../../client/client-mqtt';
 import { ERROR_EVENT } from '../../constants';
-// tslint:disable:no-string-literal
 
 describe('ClientMqtt', () => {
   const test = 'test';
   const client = new ClientMqtt({});
 
-  describe('getAckPatternName', () => {
-    it(`should append _ack to string`, () => {
-      const expectedResult = test + '_ack';
-      expect(client.getAckPatternName(test)).to.equal(expectedResult);
+  describe('getRequestPattern', () => {
+    it(`should leave pattern as it is`, () => {
+      expect(client.getRequestPattern(test)).to.equal(test);
     });
   });
-  describe('getResPatternName', () => {
-    it(`should append _res to string`, () => {
-      const expectedResult = test + '_res';
-      expect(client.getResPatternName(test)).to.equal(expectedResult);
+  describe('getResponsePattern', () => {
+    it(`should append "/reply" to string`, () => {
+      const expectedResult = test + '/reply';
+      expect(client.getResponsePattern(test)).to.equal(expectedResult);
     });
   });
   describe('publish', () => {
@@ -52,7 +50,7 @@ describe('ClientMqtt', () => {
       (client as any).mqttClient = mqttClient;
       connectSpy = sinon.stub(client, 'connect');
       assignStub = sinon
-        .stub(client, 'assignPacketId')
+        .stub(client, 'assignPacketId' as any)
         .callsFake(packet => Object.assign(packet, { id }));
     });
     afterEach(() => {
@@ -61,12 +59,11 @@ describe('ClientMqtt', () => {
     });
     it('should subscribe to response pattern name', async () => {
       await client['publish'](msg, () => {});
-      expect(subscribeSpy.calledWith(`${pattern}_res`)).to.be.true;
+      expect(subscribeSpy.calledWith(`${pattern}/reply`)).to.be.true;
     });
-    it('should publish stringified message to acknowledge pattern name', async () => {
+    it('should publish stringified message to request pattern name', async () => {
       await client['publish'](msg, () => {});
-      expect(publishSpy.calledWith(`${pattern}_ack`, JSON.stringify(msg))).to.be
-        .true;
+      expect(publishSpy.calledWith(pattern, JSON.stringify(msg))).to.be.true;
     });
     it('should add callback to routing map', async () => {
       await client['publish'](msg, () => {});
@@ -88,7 +85,7 @@ describe('ClientMqtt', () => {
       });
     });
     describe('dispose callback', () => {
-      let getResPatternStub: sinon.SinonStub;
+      let getResponsePatternStub: sinon.SinonStub;
       let callback: sinon.SinonSpy, subscription;
 
       const channel = 'channel';
@@ -96,14 +93,14 @@ describe('ClientMqtt', () => {
       beforeEach(async () => {
         callback = sinon.spy();
 
-        getResPatternStub = sinon
-          .stub(client, 'getResPatternName')
+        getResponsePatternStub = sinon
+          .stub(client, 'getResponsePattern')
           .callsFake(() => channel);
         subscription = await client['publish'](msg, callback);
         subscription(channel, JSON.stringify({ isDisposed: true, id }));
       });
       afterEach(() => {
-        getResPatternStub.restore();
+        getResponsePatternStub.restore();
       });
 
       it('should unsubscribe to response pattern name', () => {
@@ -115,11 +112,8 @@ describe('ClientMqtt', () => {
     });
   });
   describe('createResponseCallback', () => {
-    const pattern = 'test';
-    const msg = { pattern, data: 'data', id: '1' };
     let callback: sinon.SinonSpy, subscription;
     const responseMessage = {
-      err: null,
       response: 'test',
       id: '1',
     };
@@ -135,7 +129,7 @@ describe('ClientMqtt', () => {
       it('should call callback with expected arguments', () => {
         expect(
           callback.calledWith({
-            err: null,
+            err: undefined,
             response: responseMessage.response,
           }),
         ).to.be.true;
@@ -163,8 +157,8 @@ describe('ClientMqtt', () => {
         expect(
           callback.calledWith({
             isDisposed: true,
-            response: null,
-            err: null,
+            response: responseMessage.response,
+            err: undefined,
           }),
         ).to.be.true;
       });
@@ -206,12 +200,15 @@ describe('ClientMqtt', () => {
     let mergeCloseEvent: sinon.SinonStub;
 
     beforeEach(async () => {
-      createClientStub = sinon.stub(client, 'createClient').callsFake(() => ({
-        addListener: () => ({}),
-        removeListener: () => ({}),
-      }));
+      createClientStub = sinon.stub(client, 'createClient').callsFake(
+        () =>
+          ({
+            addListener: () => ({}),
+            removeListener: () => ({}),
+          } as any),
+      );
       handleErrorsSpy = sinon.spy(client, 'handleError');
-      connect$Stub = sinon.stub(client, 'connect$').callsFake(() => ({
+      connect$Stub = sinon.stub(client, 'connect$' as any).callsFake(() => ({
         subscribe: resolve => resolve(),
         toPromise() {
           return this;
@@ -269,7 +266,7 @@ describe('ClientMqtt', () => {
       };
       client
         .mergeCloseEvent(instance as any, empty())
-        .subscribe(null, err => expect(err).to.be.eql(error));
+        .subscribe(null, (err: any) => expect(err).to.be.eql(error));
     });
   });
   describe('handleError', () => {
@@ -280,6 +277,31 @@ describe('ClientMqtt', () => {
       };
       client.handleError(emitter as any);
       expect(callback.getCall(0).args[0]).to.be.eql(ERROR_EVENT);
+    });
+  });
+  describe('dispatchEvent', () => {
+    const msg = { pattern: 'pattern', data: 'data' };
+    let publishStub: sinon.SinonStub, mqttClient;
+
+    beforeEach(() => {
+      publishStub = sinon.stub();
+      mqttClient = {
+        publish: publishStub,
+      };
+      (client as any).mqttClient = mqttClient;
+    });
+
+    it('should publish packet', async () => {
+      publishStub.callsFake((a, b, c) => c());
+      await client['dispatchEvent'](msg);
+
+      expect(publishStub.called).to.be.true;
+    });
+    it('should throw error', async () => {
+      publishStub.callsFake((a, b, c) => c(new Error()));
+      client['dispatchEvent'](msg).catch(err =>
+        expect(err).to.be.instanceOf(Error),
+      );
     });
   });
 });

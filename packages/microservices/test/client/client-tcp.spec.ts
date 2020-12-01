@@ -2,22 +2,10 @@ import { expect } from 'chai';
 import * as sinon from 'sinon';
 import { ClientTCP } from '../../client/client-tcp';
 import { ERROR_EVENT } from '../../constants';
-// tslint:disable:no-string-literal
 
 describe('ClientTCP', () => {
   let client: ClientTCP;
-  let socket: {
-    connect: sinon.SinonStub;
-    publish: sinon.SinonSpy;
-    _socket: {
-      addListener: sinon.SinonStub;
-      removeListener: sinon.SinonSpy;
-      once: sinon.SinonStub;
-    };
-    on: sinon.SinonStub;
-    end: sinon.SinonSpy;
-    sendMessage: sinon.SinonSpy;
-  };
+  let socket;
   let createSocketStub: sinon.SinonStub;
 
   beforeEach(() => {
@@ -27,9 +15,8 @@ describe('ClientTCP', () => {
 
     socket = {
       connect: sinon.stub(),
-      publish: sinon.spy(),
       on: sinon.stub().callsFake(onFakeCallback),
-      _socket: {
+      netSocket: {
         addListener: sinon.stub().callsFake(onFakeCallback),
         removeListener: sinon.spy(),
         once: sinon.stub().callsFake(onFakeCallback),
@@ -64,7 +51,7 @@ describe('ClientTCP', () => {
     describe('on error', () => {
       it('should call callback', () => {
         const callback = sinon.spy();
-        sinon.stub(client, 'assignPacketId').callsFake(() => {
+        sinon.stub(client, 'assignPacketId' as any).callsFake(() => {
           throw new Error();
         });
         client['publish'](msg, callback);
@@ -88,7 +75,7 @@ describe('ClientTCP', () => {
         expect(
           callback.calledWith({
             err: undefined,
-            response: null,
+            response: undefined,
             isDisposed: true,
           }),
         ).to.be.true;
@@ -97,7 +84,7 @@ describe('ClientTCP', () => {
     describe('when not disposed', () => {
       let buffer;
       beforeEach(() => {
-        buffer = { id, err: null, response: 'res' };
+        buffer = { id, err: undefined, response: 'res' };
         callback = sinon.spy();
         client['routingMap'].set(id, callback);
         client.handleResponse(buffer);
@@ -134,7 +121,9 @@ describe('ClientTCP', () => {
           toPromise: () => source,
           pipe: () => source,
         };
-        connect$Stub = sinon.stub(client, 'connect$').callsFake(() => source);
+        connect$Stub = sinon
+          .stub(client, 'connect$' as any)
+          .callsFake(() => source);
         await client.connect();
       });
       afterEach(() => {
@@ -189,6 +178,24 @@ describe('ClientTCP', () => {
       };
       client.bindEvents(emitter as any);
       expect(callback.getCall(0).args[0]).to.be.eql(ERROR_EVENT);
+    });
+  });
+  describe('dispatchEvent', () => {
+    const msg = { pattern: 'pattern', data: 'data' };
+    let sendMessageStub: sinon.SinonStub, internalSocket;
+
+    beforeEach(() => {
+      sendMessageStub = sinon.stub();
+      internalSocket = {
+        sendMessage: sendMessageStub,
+      };
+      (client as any).socket = internalSocket;
+    });
+
+    it('should publish packet', async () => {
+      await client['dispatchEvent'](msg);
+
+      expect(sendMessageStub.called).to.be.true;
     });
   });
 });

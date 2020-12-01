@@ -1,10 +1,15 @@
 import { expect } from 'chai';
 import * as sinon from 'sinon';
-import { NO_PATTERN_MESSAGE } from '../../constants';
+import { NO_MESSAGE_HANDLER } from '../../constants';
+import { BaseRpcContext } from '../../ctx-host/base-rpc.context';
 import { ServerRedis } from '../../server/server-redis';
 
 describe('ServerRedis', () => {
   let server: ServerRedis;
+
+  const objectToMap = obj =>
+    new Map(Object.keys(obj).map(key => [key, obj[key]]) as any);
+
   beforeEach(() => {
     server = new ServerRedis({});
   });
@@ -63,16 +68,14 @@ describe('ServerRedis', () => {
       server.bindEvents(sub, null);
       expect(onSpy.getCall(0).args[0]).to.be.equal('message');
     });
-    it('should subscribe each acknowledge patterns', () => {
+    it('should subscribe to each pattern', () => {
       const pattern = 'test';
       const handler = sinon.spy();
-      (server as any).messageHandlers = {
+      (server as any).messageHandlers = objectToMap({
         [pattern]: handler,
-      };
+      });
       server.bindEvents(sub, null);
-
-      const expectedPattern = 'test_ack';
-      expect(subscribeSpy.calledWith(expectedPattern)).to.be.true;
+      expect(subscribeSpy.calledWith(pattern)).to.be.true;
     });
   });
   describe('getMessageHandler', () => {
@@ -90,23 +93,31 @@ describe('ServerRedis', () => {
     beforeEach(() => {
       getPublisherSpy = sinon.spy();
       sinon.stub(server, 'getPublisher').callsFake(() => getPublisherSpy);
-      sinon.stub(server, 'deserialize').callsFake(() => ({ id, data }));
     });
-    it(`should publish NO_PATTERN_MESSAGE if pattern not exists in messageHandlers object`, () => {
+    it('should call "handleEvent" if identifier is not present', () => {
+      const handleEventSpy = sinon.spy(server, 'handleEvent');
+      sinon.stub(server, 'parseMessage').callsFake(() => ({ data } as any));
+
+      server.handleMessage(channel, JSON.stringify({}), null);
+      expect(handleEventSpy.called).to.be.true;
+    });
+    it(`should publish NO_MESSAGE_HANDLER if pattern not exists in messageHandlers object`, () => {
+      sinon.stub(server, 'parseMessage').callsFake(() => ({ id, data } as any));
       server.handleMessage(channel, JSON.stringify({ id }), null);
       expect(
         getPublisherSpy.calledWith({
           id,
           status: 'error',
-          err: NO_PATTERN_MESSAGE,
+          err: NO_MESSAGE_HANDLER,
         }),
       ).to.be.true;
     });
     it(`should call handler with expected arguments`, () => {
       const handler = sinon.spy();
-      (server as any).messageHandlers = {
+      (server as any).messageHandlers = objectToMap({
         [channel]: handler,
-      };
+      });
+      sinon.stub(server, 'parseMessage').callsFake(() => ({ id, data } as any));
 
       server.handleMessage(channel, {}, null);
       expect(handler.calledWith(data)).to.be.true;
@@ -134,43 +145,45 @@ describe('ServerRedis', () => {
       publisher({ respond, id });
       expect(
         publisherSpy.calledWith(
-          `${pattern}_res`,
+          `${pattern}.reply`,
           JSON.stringify({ respond, id }),
         ),
       ).to.be.true;
     });
   });
-  describe('deserialize', () => {
+  describe('parseMessage', () => {
     it(`should return parsed json`, () => {
       const obj = { test: 'test' };
-      expect(server.deserialize(obj)).to.deep.equal(
+      expect(server.parseMessage(obj)).to.deep.equal(
         JSON.parse(JSON.stringify(obj)),
       );
     });
     it(`should not parse argument if it is not an object`, () => {
       const content = 'test';
-      expect(server.deserialize(content)).to.equal(content);
+      expect(server.parseMessage(content)).to.equal(content);
     });
   });
-  describe('getAckPatternName', () => {
+  describe('getRequestPattern', () => {
     const test = 'test';
-    it(`should append _ack to string`, () => {
-      const expectedResult = test + '_ack';
-      expect(server.getAckQueueName(test)).to.equal(expectedResult);
+    it(`should leave pattern as it is`, () => {
+      const expectedResult = test;
+      expect(server.getRequestPattern(test)).to.equal(expectedResult);
     });
   });
-  describe('getResPatternName', () => {
+  describe('getReplyPattern', () => {
     const test = 'test';
-    it(`should append _res to string`, () => {
-      const expectedResult = test + '_res';
-      expect(server.getResQueueName(test)).to.equal(expectedResult);
+    it(`should append ".reply" to string`, () => {
+      const expectedResult = test + '.reply';
+      expect(server.getReplyPattern(test)).to.equal(expectedResult);
     });
   });
   describe('getClientOptions', () => {
     it('should return options object with "retry_strategy" and call "createRetryStrategy"', () => {
       const createSpy = sinon.spy(server, 'createRetryStrategy');
       const { retry_strategy } = server.getClientOptions();
-      retry_strategy({} as any);
+      try {
+        retry_strategy({} as any);
+      } catch {}
       expect(createSpy.called).to.be.true;
     });
   });
@@ -183,27 +196,31 @@ describe('ServerRedis', () => {
       });
     });
     describe('when "retryAttempts" does not exist', () => {
-      it('should return undefined', () => {
+      it('should throw an exception', () => {
         (server as any).options.options = {};
         (server as any).options.options.retryAttempts = undefined;
-        const result = server.createRetryStrategy({} as any);
-        expect(result).to.be.undefined;
+
+        expect(() => server.createRetryStrategy({} as any)).to.throw(Error);
       });
     });
     describe('when "attempts" count is max', () => {
-      it('should return undefined', () => {
+      it('should throw an exception', () => {
         (server as any).options.options = {};
         (server as any).options.options.retryAttempts = 3;
-        const result = server.createRetryStrategy({ attempt: 4 } as any);
-        expect(result).to.be.undefined;
+
+        expect(() =>
+          server.createRetryStrategy({ attempt: 4 } as any),
+        ).to.throw(Error);
       });
     });
     describe('when ECONNREFUSED', () => {
       it('should call logger', () => {
         const loggerErrorSpy = sinon.spy((server as any).logger, 'error');
-        const result = server.createRetryStrategy({
-          error: { code: 'ECONNREFUSED' },
-        } as any);
+        try {
+          server.createRetryStrategy({
+            error: { code: 'ECONNREFUSED' },
+          } as any);
+        } catch {}
         expect(loggerErrorSpy.called).to.be.true;
       });
     });
@@ -216,6 +233,24 @@ describe('ServerRedis', () => {
         const result = server.createRetryStrategy({ attempt: 2 } as any);
         expect(result).to.be.eql((server as any).options.retryDelay);
       });
+    });
+  });
+  describe('handleEvent', () => {
+    const channel = 'test';
+    const data = 'test';
+
+    it('should call handler with expected arguments', () => {
+      const handler = sinon.spy();
+      (server as any).messageHandlers = objectToMap({
+        [channel]: handler,
+      });
+
+      server.handleEvent(
+        channel,
+        { pattern: '', data },
+        new BaseRpcContext([]),
+      );
+      expect(handler.calledWith(data)).to.be.true;
     });
   });
 });

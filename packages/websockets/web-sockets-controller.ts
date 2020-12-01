@@ -6,14 +6,16 @@ import { from as fromPromise, Observable, of, Subject } from 'rxjs';
 import { distinctUntilChanged, mergeAll } from 'rxjs/operators';
 import { GATEWAY_OPTIONS, PORT_METADATA } from './constants';
 import { WsContextCreator } from './context/ws-context-creator';
-import { InvalidSocketPortException } from './exceptions/invalid-socket-port.exception';
+import { InvalidSocketPortException } from './errors/invalid-socket-port.exception';
 import {
   GatewayMetadataExplorer,
   MessageMappingProperties,
 } from './gateway-metadata-explorer';
+import { GatewayMetadata } from './interfaces/gateway-metadata.interface';
 import { NestGateway } from './interfaces/nest-gateway.interface';
-import { ObservableSocketServer } from './interfaces/observable-socket-server.interface';
+import { SocketEventsHost } from './interfaces/socket-events-host.interface';
 import { SocketServerProvider } from './socket-server-provider';
+import { compareElementAt } from './utils/compare-element.util';
 
 export class WebSocketsController {
   private readonly metadataExplorer = new GatewayMetadataExplorer(
@@ -26,10 +28,10 @@ export class WebSocketsController {
     private readonly contextCreator: WsContextCreator,
   ) {}
 
-  public hookGatewayIntoServer(
+  public mergeGatewayAndServer(
     instance: NestGateway,
-    metatype: Type<any>,
-    module: string,
+    metatype: Type<unknown> | Function,
+    moduleKey: string,
   ) {
     const options = Reflect.getMetadata(GATEWAY_OPTIONS, metatype) || {};
     const port = Reflect.getMetadata(PORT_METADATA, metatype) || 0;
@@ -37,34 +39,40 @@ export class WebSocketsController {
     if (!Number.isInteger(port)) {
       throw new InvalidSocketPortException(port, metatype);
     }
-    this.subscribeObservableServer(instance, options, port, module);
+    this.subscribeToServerEvents(instance, options, port, moduleKey);
   }
 
-  public subscribeObservableServer(
+  public subscribeToServerEvents<T extends GatewayMetadata>(
     instance: NestGateway,
-    options: any,
+    options: T,
     port: number,
-    module: string,
+    moduleKey: string,
   ) {
     const nativeMessageHandlers = this.metadataExplorer.explore(instance);
     const messageHandlers = nativeMessageHandlers.map(
-      ({ callback, message }) => ({
+      ({ callback, message, methodName }) => ({
         message,
-        callback: this.contextCreator.create(instance, callback, module),
+        methodName,
+        callback: this.contextCreator.create(
+          instance,
+          callback,
+          moduleKey,
+          methodName,
+        ),
       }),
     );
-    const observableServer = this.socketServerProvider.scanForSocketServer(
+    const observableServer = this.socketServerProvider.scanForSocketServer<T>(
       options,
       port,
     );
-    this.hookServerToProperties(instance, observableServer.server);
+    this.assignServerToProperties(instance, observableServer.server);
     this.subscribeEvents(instance, messageHandlers, observableServer);
   }
 
   public subscribeEvents(
     instance: NestGateway,
     subscribersMap: MessageMappingProperties[],
-    observableServer: ObservableSocketServer,
+    observableServer: SocketEventsHost,
   ) {
     const { init, disconnect, connection, server } = observableServer;
     const adapter = this.config.getIoAdapter();
@@ -91,14 +99,14 @@ export class WebSocketsController {
     connection: Subject<any>,
   ) {
     const adapter = this.config.getIoAdapter();
-    return (...args: any[]) => {
+    return (...args: unknown[]) => {
       const [client] = args;
       connection.next(args);
       context.subscribeMessages(subscribersMap, client, instance);
 
       const disconnectHook = adapter.bindClientDisconnect;
       disconnectHook &&
-        disconnectHook.call(adapter, client, _ => disconnect.next(client));
+        disconnectHook.call(adapter, client, () => disconnect.next(client));
     };
   }
 
@@ -111,8 +119,10 @@ export class WebSocketsController {
   public subscribeConnectionEvent(instance: NestGateway, event: Subject<any>) {
     if (instance.handleConnection) {
       event
-        .pipe(distinctUntilChanged())
-        .subscribe((args: any[]) => instance.handleConnection(...args));
+        .pipe(
+          distinctUntilChanged((prev, curr) => compareElementAt(prev, curr, 0)),
+        )
+        .subscribe((args: unknown[]) => instance.handleConnection(...args));
     }
   }
 
@@ -152,7 +162,10 @@ export class WebSocketsController {
     return of(result);
   }
 
-  private hookServerToProperties(instance: NestGateway, server) {
+  private assignServerToProperties<T = any>(
+    instance: NestGateway,
+    server: object,
+  ) {
     for (const propertyKey of this.metadataExplorer.scanForServerHooks(
       instance,
     )) {

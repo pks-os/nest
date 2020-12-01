@@ -1,46 +1,50 @@
-import { NestInterceptor } from '@nestjs/common';
-import { Controller } from '@nestjs/common/interfaces';
+import { NestInterceptor, Type } from '@nestjs/common';
+import {
+  CallHandler,
+  ContextType,
+  Controller,
+} from '@nestjs/common/interfaces';
 import { isEmpty } from '@nestjs/common/utils/shared.utils';
 import { defer, from as fromPromise, Observable } from 'rxjs';
-import { switchMap } from 'rxjs/operators';
-import { ExecutionContextHost } from '../helpers/execution-context.host';
+import { mergeAll, switchMap } from 'rxjs/operators';
+import { ExecutionContextHost } from '../helpers/execution-context-host';
 
 export class InterceptorsConsumer {
-  public async intercept(
+  public async intercept<TContext extends string = ContextType>(
     interceptors: NestInterceptor[],
-    args: any[],
+    args: unknown[],
     instance: Controller,
-    callback: (...args) => any,
-    next: () => Promise<any>,
-  ): Promise<any> {
+    callback: (...args: unknown[]) => unknown,
+    next: () => Promise<unknown>,
+    type?: TContext,
+  ): Promise<unknown> {
     if (isEmpty(interceptors)) {
       return next();
     }
     const context = this.createContext(args, instance, callback);
+    context.setType<TContext>(type);
+
     const start$ = defer(() => this.transformDeffered(next));
-    /***
-      const nextFn =  (i: number) => async () => {
-      if (i <= interceptors.length) {
+    const nextFn = (i = 0) => async () => {
+      if (i >= interceptors.length) {
         return start$;
       }
-      return await interceptors[i].intercept(context, nextFn(i + 1) as any);
+      const handler: CallHandler = {
+        handle: () => fromPromise(nextFn(i + 1)()).pipe(mergeAll()),
+      };
+      return interceptors[i].intercept(context, handler);
     };
-    */
-    const result$ = await interceptors.reduce(
-      async (stream$, interceptor) => interceptor.intercept(context, await stream$),
-      Promise.resolve(start$),
-    );
-    return result$;
+    return nextFn()();
   }
 
   public createContext(
-    args: any[],
+    args: unknown[],
     instance: Controller,
-    callback: (...args) => any,
+    callback: (...args: unknown[]) => unknown,
   ): ExecutionContextHost {
     return new ExecutionContextHost(
       args,
-      instance.constructor as any,
+      instance.constructor as Type<unknown>,
       callback,
     );
   }

@@ -1,8 +1,9 @@
 import { INestApplication } from '@nestjs/common';
 import { Transport } from '@nestjs/microservices';
 import { Test } from '@nestjs/testing';
-import * as express from 'express';
+import { expect } from 'chai';
 import * as request from 'supertest';
+import { AppController } from '../src/app.controller';
 import { ApplicationModule } from '../src/app.module';
 
 describe('RPC transport', () => {
@@ -14,10 +15,14 @@ describe('RPC transport', () => {
       imports: [ApplicationModule],
     }).compile();
 
-    server = express();
-    app = module.createNestApplication(server);
+    app = module.createNestApplication();
+    server = app.getHttpAdapter().getInstance();
+
     app.connectMicroservice({
       transport: Transport.TCP,
+      options: {
+        host: '0.0.0.0',
+      },
     });
     await app.startAllMicroservicesAsync();
     await app.init();
@@ -41,6 +46,20 @@ describe('RPC transport', () => {
   it(`/POST (Observable stream)`, () => {
     return request(server)
       .post('/?command=streamSum')
+      .send([1, 2, 3, 4, 5])
+      .expect(200, '15');
+  });
+
+  it(`/POST (useFactory client)`, () => {
+    return request(server)
+      .post('/useFactory?command=sum')
+      .send([1, 2, 3, 4, 5])
+      .expect(200, '15');
+  });
+
+  it(`/POST (useClass client)`, () => {
+    return request(server)
+      .post('/useClass?command=sum')
       .send([1, 2, 3, 4, 5])
       .expect(200, '15');
   });
@@ -71,9 +90,19 @@ describe('RPC transport', () => {
   });
 
   it(`/POST (pattern not found)`, () => {
-    return request(server)
-      .post('/?command=test')
-      .expect(500);
+    return request(server).post('/?command=test').expect(500);
+  });
+
+  it(`/POST (event notification)`, done => {
+    request(server)
+      .post('/notify')
+      .send([1, 2, 3, 4, 5])
+      .end(() => {
+        setTimeout(() => {
+          expect(AppController.IS_NOTIFIED).to.be.true;
+          done();
+        }, 1000);
+      });
   });
 
   afterEach(async () => {

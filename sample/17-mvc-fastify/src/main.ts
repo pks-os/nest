@@ -1,9 +1,16 @@
-import { FastifyAdapter, NestFactory } from '@nestjs/core';
+import { NestFactory } from '@nestjs/core';
+import {
+  FastifyAdapter,
+  NestFastifyApplication,
+} from '@nestjs/platform-fastify';
 import { join } from 'path';
-import { ApplicationModule } from './app.module';
+import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(ApplicationModule, new FastifyAdapter());
+  const app = await NestFactory.create<NestFastifyApplication>(
+    AppModule,
+    new FastifyAdapter(),
+  );
   app.useStaticAssets({
     root: join(__dirname, '..', 'public'),
     prefix: '/public/',
@@ -14,6 +21,8 @@ async function bootstrap() {
     },
     templates: join(__dirname, '..', 'views'),
   });
+
   await app.listen(3000);
+  console.log(`Application is running on: ${await app.getUrl()}`);
 }
 bootstrap();

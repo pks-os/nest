@@ -2,7 +2,6 @@ import { expect } from 'chai';
 import * as sinon from 'sinon';
 import { ClientNats } from '../../client/client-nats';
 import { ERROR_EVENT } from '../../constants';
-// tslint:disable:no-string-literal
 
 describe('ClientNats', () => {
   const client = new ClientNats({});
@@ -42,10 +41,12 @@ describe('ClientNats', () => {
       };
       (client as any).natsClient = natsClient;
 
-      connectSpy = sinon.stub(client, 'connect').callsFake(() => {
+      connectSpy = sinon.stub(client, 'connect').callsFake(async () => {
         (client as any).natsClient = natsClient;
       });
-      createClient = sinon.stub(client, 'createClient').callsFake(() => client);
+      createClient = sinon
+        .stub(client, 'createClient')
+        .callsFake(() => client as any);
     });
     afterEach(() => {
       connectSpy.restore();
@@ -59,7 +60,7 @@ describe('ClientNats', () => {
       let assignPacketIdStub: sinon.SinonStub;
       beforeEach(() => {
         assignPacketIdStub = sinon
-          .stub(client, 'assignPacketId')
+          .stub(client, 'assignPacketId' as any)
           .callsFake(() => {
             throw new Error();
           });
@@ -83,7 +84,7 @@ describe('ClientNats', () => {
       beforeEach(async () => {
         callback = sinon.spy();
         assignStub = sinon
-          .stub(client, 'assignPacketId')
+          .stub(client, 'assignPacketId' as any)
           .callsFake(packet => Object.assign(packet, { id }));
 
         subscription = await client['publish'](msg, callback);
@@ -103,7 +104,6 @@ describe('ClientNats', () => {
     const msg = { pattern, data: 'data', id: '1' };
     let callback: sinon.SinonSpy, subscription;
     const responseMessage = {
-      err: null,
       response: 'test',
       id: '1',
     };
@@ -118,7 +118,7 @@ describe('ClientNats', () => {
       it('should call callback with expected arguments', () => {
         expect(
           callback.calledWith({
-            err: null,
+            err: undefined,
             response: responseMessage.response,
           }),
         ).to.be.true;
@@ -139,8 +139,8 @@ describe('ClientNats', () => {
         expect(
           callback.calledWith({
             isDisposed: true,
-            response: null,
-            err: null,
+            response: responseMessage.response,
+            err: undefined,
           }),
         ).to.be.true;
       });
@@ -191,9 +191,9 @@ describe('ClientNats', () => {
     beforeEach(async () => {
       createClientSpy = sinon
         .stub(client, 'createClient')
-        .callsFake(() => natsClient);
+        .callsFake(() => natsClient as any);
       handleErrorsSpy = sinon.spy(client, 'handleError');
-      connect$Spy = sinon.spy(client, 'connect$');
+      connect$Spy = sinon.spy(client, 'connect$' as any);
 
       await client.connect();
     });
@@ -240,6 +240,31 @@ describe('ClientNats', () => {
       };
       client.handleError(emitter as any);
       expect(callback.getCall(0).args[0]).to.be.eql(ERROR_EVENT);
+    });
+  });
+  describe('dispatchEvent', () => {
+    const msg = { pattern: 'pattern', data: 'data' };
+    let publishStub: sinon.SinonStub, natsClient;
+
+    beforeEach(() => {
+      publishStub = sinon.stub();
+      natsClient = {
+        publish: publishStub,
+      };
+      (client as any).natsClient = natsClient;
+    });
+
+    it('should publish packet', async () => {
+      publishStub.callsFake((a, b, c) => c());
+      await client['dispatchEvent'](msg);
+
+      expect(publishStub.called).to.be.true;
+    });
+    it('should throw error', async () => {
+      publishStub.callsFake((a, b, c) => c(new Error()));
+      client['dispatchEvent'](msg).catch(err =>
+        expect(err).to.be.instanceOf(Error),
+      );
     });
   });
 });

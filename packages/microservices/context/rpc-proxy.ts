@@ -1,15 +1,15 @@
 import { isFunction } from '@nestjs/common/utils/shared.utils';
-import { ExecutionContextHost } from '@nestjs/core/helpers/execution-context.host';
+import { ExecutionContextHost } from '@nestjs/core/helpers/execution-context-host';
 import { Observable } from 'rxjs';
 import { catchError } from 'rxjs/operators';
 import { RpcExceptionsHandler } from '../exceptions/rpc-exceptions-handler';
 
 export class RpcProxy {
   public create(
-    targetCallback: (...args) => Promise<Observable<any>>,
+    targetCallback: (...args: unknown[]) => Promise<Observable<any>>,
     exceptionsHandler: RpcExceptionsHandler,
-  ): (...args) => Promise<Observable<any>> {
-    return async (...args) => {
+  ): (...args: unknown[]) => Promise<Observable<unknown>> {
+    return async (...args: unknown[]) => {
       try {
         const result = await targetCallback(...args);
         return !this.isObservable(result)
@@ -27,10 +27,11 @@ export class RpcProxy {
 
   handleError<T>(
     exceptionsHandler: RpcExceptionsHandler,
-    args: any[],
+    args: unknown[],
     error: T,
-  ): Observable<any> {
+  ): Observable<unknown> {
     const host = new ExecutionContextHost(args);
+    host.setType('rpc');
     return exceptionsHandler.handle(error, host);
   }
 

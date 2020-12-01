@@ -19,15 +19,17 @@ export class RMQBroadcastController {
         urls: [`amqp://localhost:5672`],
         queue: 'test_broadcast',
         queueOptions: { durable: false },
+        socketOptions: { noDelay: true },
       },
     });
   }
 
   @Get('broadcast')
   multicats() {
-    return this.client
-      .send<number>({ cmd: 'broadcast' }, {})
-      .pipe(scan((a, b) => a + b), take(2));
+    return this.client.send<number>({ cmd: 'broadcast' }, {}).pipe(
+      scan((a, b) => a + b),
+      take(2),
+    );
   }
 
   @MessagePattern({ cmd: 'broadcast' })

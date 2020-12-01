@@ -1,15 +1,29 @@
-import { Controller, Post, Body, Query, HttpCode } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  HttpCode,
+  Inject,
+  Post,
+  Query,
+} from '@nestjs/common';
 import {
   Client,
-  MessagePattern,
   ClientProxy,
+  EventPattern,
+  MessagePattern,
   Transport,
 } from '@nestjs/microservices';
-import { Observable, of, from } from 'rxjs';
+import { from, Observable, of } from 'rxjs';
 import { scan } from 'rxjs/operators';
 
 @Controller()
 export class AppController {
+  constructor(
+    @Inject('USE_CLASS_CLIENT') private useClassClient: ClientProxy,
+    @Inject('USE_FACTORY_CLIENT') private useFactoryClient: ClientProxy,
+  ) {}
+  static IS_NOTIFIED = false;
+
   @Client({ transport: Transport.TCP })
   client: ClientProxy;
 
@@ -17,6 +31,24 @@ export class AppController {
   @HttpCode(200)
   call(@Query('command') cmd, @Body() data: number[]): Observable<number> {
     return this.client.send<number>({ cmd }, data);
+  }
+
+  @Post('useFactory')
+  @HttpCode(200)
+  callWithClientUseFactory(
+    @Query('command') cmd,
+    @Body() data: number[],
+  ): Observable<number> {
+    return this.useFactoryClient.send<number>({ cmd }, data);
+  }
+
+  @Post('useClass')
+  @HttpCode(200)
+  callWithClientUseClass(
+    @Query('command') cmd,
+    @Body() data: number[],
+  ): Observable<number> {
+    return this.useClassClient.send<number>({ cmd }, data);
   }
 
   @Post('stream')
@@ -39,8 +71,8 @@ export class AppController {
       return result === expected;
     };
     return data
-      .map(async tab => await send(tab))
-      .reduce(async (a, b) => (await a) && (await b));
+      .map(async tab => send(tab))
+      .reduce(async (a, b) => (await a) && b);
   }
 
   @MessagePattern({ cmd: 'sum' })
@@ -61,5 +93,15 @@ export class AppController {
   @MessagePattern({ cmd: 'streaming' })
   streaming(data: number[]): Observable<number> {
     return from(data);
+  }
+
+  @Post('notify')
+  async sendNotification(): Promise<any> {
+    return this.client.emit<number>('notification', true);
+  }
+
+  @EventPattern('notification')
+  eventHandler(data: boolean) {
+    AppController.IS_NOTIFIED = data;
   }
 }

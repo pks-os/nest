@@ -1,18 +1,20 @@
 /**
  * Validation error description.
  * @see https://github.com/typestack/class-validator
+ *
+ * @publicApi
  */
 export interface ValidationError {
   /**
    * Object that was validated.
    */
-  target: Object;
+  target: Record<string, any>;
   /**
-   * Object's property that haven't pass validation.
+   * Object's property that hasn't passed validation.
    */
   property: string;
   /**
-   * Value that haven't pass a validation.
+   * Value that hasn't passed validation.
    */
   value: any;
   /**

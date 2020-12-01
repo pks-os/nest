@@ -1,7 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { Transport } from '@nestjs/microservices';
 import { Test } from '@nestjs/testing';
-import * as express from 'express';
+import { expect } from 'chai';
 import * as request from 'supertest';
 import { MqttController } from '../src/mqtt/mqtt.controller';
 
@@ -14,10 +14,14 @@ describe('MQTT transport', () => {
       controllers: [MqttController],
     }).compile();
 
-    server = express();
-    app = module.createNestApplication(server);
+    app = module.createNestApplication();
+    server = app.getHttpAdapter().getInstance();
+
     app.connectMicroservice({
       transport: Transport.MQTT,
+      options: {
+        url: 'mqtt://0.0.0.0:1883',
+      },
     });
     await app.startAllMicroservicesAsync();
     await app.init();
@@ -45,7 +49,7 @@ describe('MQTT transport', () => {
       .expect(200, '15');
   });
 
-  it(`/POST (concurrent)`, () => {
+  it(`/POST (concurrent)`, function () {
     return request(server)
       .post('/concurrent')
       .send([
@@ -61,13 +65,63 @@ describe('MQTT transport', () => {
         Array.from({ length: 10 }, (v, k) => k + 91),
       ])
       .expect(200, 'true');
-  });
+  }).timeout(5000);
 
   it(`/POST (streaming)`, () => {
     return request(server)
       .post('/stream')
       .send([1, 2, 3, 4, 5])
       .expect(200, '15');
+  });
+
+  it(`/POST (event notification)`, done => {
+    request(server)
+      .post('/notify')
+      .send([1, 2, 3, 4, 5])
+      .end(() => {
+        setTimeout(() => {
+          expect(MqttController.IS_NOTIFIED).to.be.true;
+          done();
+        }, 1000);
+      });
+  });
+
+  it(`/POST (wildcard EVENT #)`, done => {
+    request(server)
+      .post('/wildcard-event')
+      .send([1, 2, 3, 4, 5])
+      .end(() => {
+        setTimeout(() => {
+          expect(MqttController.IS_WILDCARD_EVENT_RECEIVED).to.be.true;
+          done();
+        }, 1000);
+      });
+  });
+
+  it(`/POST (wildcard MESSAGE #)`, () => {
+    return request(server)
+      .post('/wildcard-message')
+      .send([1, 2, 3, 4, 5])
+      .expect(201, '15');
+  });
+
+  it(`/POST (wildcard EVENT +)`, done => {
+    request(server)
+      .post('/wildcard-event2')
+      .send([1, 2, 3, 4, 5])
+      .end(() => {
+        setTimeout(() => {
+          expect(MqttController.IS_WILDCARD2_EVENT_RECEIVED).to.be.true;
+          done();
+        }, 1000);
+      });
+  });
+
+  it(`/POST (wildcard MESSAGE +)`, () => {
+    return request(server)
+      .post('/wildcard-message2')
+      .send([1, 2, 3, 4, 5])
+      .expect(201, '15');
   });
 
   afterEach(async () => {
